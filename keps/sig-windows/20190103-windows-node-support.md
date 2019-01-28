@@ -89,7 +89,7 @@ As of 29-11-2018 much of the work for enabling Windows nodes has already been co
     - Pod (single or multiple containers per Pod with process isolation). There are no notable differences in Pod status fields between Linux and Windows containers
     - Services types NodePort, ClusterIP, LoadBalancer, and ExternalName
     - Workload controllers ReplicaSet, ReplicationController, Deployments, StatefulSets, DaemonSet, Job, CronJob
-    - ConfigMap, Secrets: as environment variables or volumes
+    - ConfigMap, Secrets: as environment variables or volumes (Volume subpath does not work)
     - Resource limits
     - Pod & container metrics
     - Horizontal Pod Autoscaling
@@ -102,12 +102,13 @@ As of 29-11-2018 much of the work for enabling Windows nodes has already been co
 - Many<sup id="a1">[1]</sup> of the e2e conformance tests when run with [alternate Windows-based images](https://hub.docker.com/r/e2eteam/) which are being moved to [kubernetes-sigs/windows-testing](https://www.github.com/kubernetes-sigs/windows-testing)
 - Persistent storage: FlexVolume with [SMB + iSCSI](https://github.com/Microsoft/K8s-Storage-Plugins/tree/master/flexvolume/windows), and in-tree AzureFile and AzureDisk providers
 
-### What we need to test and verify if it works or not for GA (items that are unsupported will be documented)
+### What we need to test and verify if it works or not for GA (Some items will be documented as unsupported, others will be documented as supported, and some will be bugs that will be fixed for GA)
 - Headless services (https://github.com/kubernetes/kubernetes/issues/73416)
 - OOM reporting (https://github.com/kubernetes/kubernetes/issues/73417)
 - QoS (guaranteed, burstable, best effort) (https://github.com/kubernetes/kubernetes/issues/73418)
 - Is terminationGracePeriodSeconds supported (https://github.com/moby/moby/issues/25982)
 - Pod DNS configuration like hostname, subdomain, hostAliases, dnsConfig, dnsPolicy (https://github.com/kubernetes/kubernetes/issues/73414)
+- Mounting local volumes on Windows does not check if the volume path exists (https://github.com/kubernetes/kubernetes/issues/73332)
 
 ### Windows Node Roadmap (post-GA work)
 - Group Managed Service Accounts, a way to assign an Active Directory identity to a Windows container, is forthcoming with KEP `Windows Group Managed Service Accounts for Container Identity`
@@ -125,6 +126,7 @@ As of 29-11-2018 much of the work for enabling Windows nodes has already been co
     - Reservations are not enforced by the OS, but overprovisioning could be blocked with `--enforce-node-allocatable=pods` (pending: tests needed)
     - Certain volume mappings
       - Single file & subpath volume mounting
+      - Subpath volume mounting for Secrets
       - Host mount projection
       - DefaultMode (due to UID/GID dependency)
       - readOnly root filesystem. Mapped volumes still support readOnly
