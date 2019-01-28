@@ -38,8 +38,9 @@ status: implementable
     - [Non-Goals](#non-goals)
 - [Proposal](#proposal)
     - [What works today](#what-works-today)
-    - [What will work eventually](#what-will-work-eventually)
-    - [What will never work (without underlying OS changes)](#what-will-never-work-without-underlying-os-changes)
+    - [What we need to test and verify if it works or not for GA (Some items will be documented as unsupported, others will be documented as supported, and some will be bugs that will be fixed for GA)](#what-we-need-to-test-and-verify-if-it-works-or-not-for-ga-some-items-will-be-documented-as-unsupported-others-will-be-documented-as-supported-and-some-will-be-bugs-that-will-be-fixed-for-ga)
+    - [Windows Node Roadmap (post-GA work)](#windows-node-roadmap-post-ga-work)
+    - [What will never work (Note that some features are plain unsupported while some will not work without underlying OS changes)](#what-will-never-work-note-that-some-features-are-plain-unsupported-while-some-will-not-work-without-underlying-os-changes)
     - [Relevant resources/conversations](#relevant-resourcesconversations)
     - [Risks and Mitigations](#risks-and-mitigations)
         - [Ensuring OS-specific workloads land on appropriate container host](#ensuring-os-specific-workloads-land-on-appropriate-container-host)
@@ -324,58 +325,33 @@ The Windows container runtime also has a few important differences:
 
 
 ### V1.Container
-- `V1.Container.ResourceRequirements.limits.cpu`
-- `V1.Container.ResourceRequirements.limits.memory`
 
-
-Windows doesn't use hard limits for CPU allocations. Instead, a share system is used. The existing fields based on millicores are scaled into relative shares that are followed by the Windows scheduler. [see: kuberuntime/helpers_windows.go](https://github.com/kubernetes/kubernetes/blob/master/pkg/kubelet/kuberuntime/helpers_windows.go), [see: resource controls in Microsoft docs](https://docs.microsoft.com/en-us/virtualization/windowscontainers/manage-containers/resource-controls)
+- `V1.Container.ResourceRequirements.limits.cpu` and `V1.Container.ResourceRequirements.limits.memory` - Windows doesn't use hard limits for CPU allocations. Instead, a share system is used. The existing fields based on millicores are scaled into relative shares that are followed by the Windows scheduler. [see: kuberuntime/helpers_windows.go](https://github.com/kubernetes/kubernetes/blob/master/pkg/kubelet/kuberuntime/helpers_windows.go), [see: resource controls in Microsoft docs](https://docs.microsoft.com/en-us/virtualization/windowscontainers/manage-containers/resource-controls)
 When using Hyper-V isolation (alpha), the hypervisor also needs a number of CPUs assigned. The millicores used in the limit is divided by 1000 to get the number of cores required. The CPU count is a hard limit.
-
-Huge pages are not implemented in the Windows container runtime, and are not available. They require [asserting a user privilege](https://docs.microsoft.com/en-us/windows/desktop/Memory/large-page-support) that's not configurable for containers.
-
-- `V1.Container.ResourceRequirements.requests.cpu`
-- `V1.Container.ResourceRequirements.requests.memory`
-
-Requests are subtracted from node available resources, so they can be used to avoid overprovisioning a node. However, they cannot be used to guarantee resources in an overprovisioned node. They should be applied to all containers as a best practice if the operator wants to avoid overprovisioning entirely.
-
+  - Huge pages are not implemented in the Windows container runtime, and are not available. They require [asserting a user privilege](https://docs.microsoft.com/en-us/windows/desktop/Memory/large-page-support) that's not configurable for containers.
+- `V1.Container.ResourceRequirements.requests.cpu` and `V1.Container.ResourceRequirements.requests.memory` - Requests are subtracted from node available resources, so they can be used to avoid overprovisioning a node. However, they cannot be used to guarantee resources in an overprovisioned node. They should be applied to all containers as a best practice if the operator wants to avoid overprovisioning entirely.
 - `V1.Container.SecurityContext.allowPrivilegeEscalation` - not possible on Windows, none of the capabilies are hooked up
 - `V1.Container.SecurityContext.Capabilities` - POSIX capabilities are not implemented on Windows
 - `V1.Container.SecurityContext.privileged` - Windows doesn't support privileged containers
 - `V1.Container.SecurityContext.readOnlyRootFilesystem` - not possible on Windows, write access is required for registry & system processes to run inside the container
 - `V1.Container.SecurityContext.runAsGroup` - not possible on Windows, no GID support
 - `V1.Container.SecurityContext.runAsUser` - not possible on Windows, no UID support as int. This needs to change to IntStr, see [64009](https://github.com/kubernetes/kubernetes/pull/64009), to support Windows users as strings, or another field is needed. Work remaining tracked in [#73387](https://github.com/kubernetes/kubernetes/issues/73387)
-
 - `V1.Container.SecurityContext.seLinuxOptions` - not possible on Windows, no SELinux
-
 - `V1.Container.terminationMessagePath` - this has some limitations in that Windows doesn't support mapping single files. The default value is `/dev/termination-log`, which does work because it does not exist on Windows by default.
-
-
-- `V1.Container.volumeMounts`
-
-> TODO: check if mounting different volumes to containers in the same pod works. May need to go on test TODO list
 
 
 ### V1.Pod
 
-> TODO: double check other fields in [source](https://github.com/kubernetes/kubernetes/blob/master/staging/src/k8s.io/api/core/v1/types.go#L2743)
-
-
 - `V1.Pod.hostIPC`, `v1.pod.hostpid` - host namespace sharing is not possible on Windows
-
 - `V1.Pod.hostNetwork` - There is no Windows OS support to share the host network
-
 - `V1.Pod.dnsPolicy` - ClusterFirstWithHostNet - is not supported because Host Networking is not supported on Windows.
-
 - `V1.podSecurityContext.runAsUser` provides a UID, not available on Windows
 - `V1.podSecurityContext.supplementalGroups` provides GID, not available on Windows
-
 - `V1.Pod.shareProcessNamespace` - this is an alpha feature, and depends on Linux cgroups which are not implemented on Windows
-
+- `V1.Pod.terminationGracePeriodSeconds` - this is not fully implemented in Docker on Windows, see: [reference](https://github.com/moby/moby/issues/25982). The behavior today is that the ENTRYPOINT process is sent `CTRL_SHUTDOWN_EVENT`, then Windows waits 5 seconds by hardcoded default, and finally shuts down all processes using the normal Windows shutdown behavior. The 5 second default is actually in the Windows registry [inside the container](https://github.com/moby/moby/issues/25982#issuecomment-426441183), so it can be overridden when the container is built. Runtime configuration will be feasible in CRI-ContainerD but not for v1.14. Issue [#73434](https://github.com/kubernetes/kubernetes/issues/73434) is tracking this for a later release.
 - `V1.Pod.volumeDevices` - this is an alpha feature, and is not implemented on Windows. Windows cannot attach raw block devices to pods.
-
 - `V1.Pod.Volumes` - EmptyDir, Secret, ConfigMap, HostPath - all work and have tests in TestGrid
   - `V1.EmptyDirVolumeSource` - the Node default medium is disk on Windows. `memory` is not supported, as Windows does not have a built-in RAM disk.
-
 - `V1.VolumeMount.mountPropagation` - only MountPropagationHostToContainer is available. Windows cannot create mounts within a pod or project them back to the node.
 
 
