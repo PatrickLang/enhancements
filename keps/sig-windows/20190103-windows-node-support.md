@@ -21,8 +21,8 @@ approvers:
   - "@spiffxp"
 editor: TBD
 creation-date: 2018-11-29
-last-updated: 2019-01-25
-status: provisional
+last-updated: 2019-01-28
+status: implementable
 ---
 
 # Windows node support
@@ -86,20 +86,29 @@ As of 29-11-2018 much of the work for enabling Windows nodes has already been co
 
 ### What works today
 - Windows-based containers can be created by kubelet, [provided the host OS version matches the container base image](https://docs.microsoft.com/en-us/virtualization/windowscontainers/deploy-containers/version-compatibility)
-    - Pod (single or multiple containers per Pod with process isolation)
+    - Pod (single or multiple containers per Pod with process isolation). There are no notable differences in Pod status fields
     - Services types NodePort, ClusterIP, LoadBalancer, and ExternalName
     - Workload controllers ReplicaSet, ReplicationController, Deployments, StatefulSets, DaemonSet, Job, CronJob
     - ConfigMap, Secrets: as environment variables or volumes
     - Resource limits
     - Pod & container metrics
     - Horizontal Pod Autoscaling
+    - Volumes can be shared between containers in a Pod
+    - EmptyDir
 - Windows Server 2019 is the only Windows operating system we will support at GA timeframe. Note above that the host operating system version and the container base image need to match. This is a Windows limitation we cannot overcome.
 - Customers can deploy a heterogeneous cluster, with Windows and Linux compute nodes side-by-side and schedule Docker containers on both operating systems. Of course, Windows Server containers have to be scheduled on Windows and Linux containers on Linux
 - Out-of-tree Pod networking with [Azure-CNI](https://github.com/Azure/azure-container-networking/blob/master/docs/cni.md), [OVN-Kubernetes](https://github.com/openvswitch/ovn-kubernetes), [two CNI meta-plugins](https://github.com/containernetworking/plugins), [Flannel (VXLAN and Host-Gateway)](https://github.com/coreos/flannel) 
 - Dockershim CRI
 - Many<sup id="a1">[1]</sup> of the e2e conformance tests when run with [alternate Windows-based images](https://hub.docker.com/r/e2eteam/) which are being moved to [kubernetes-sigs/windows-testing](https://www.github.com/kubernetes-sigs/windows-testing)
 - Persistent storage: FlexVolume with [SMB + iSCSI](https://github.com/Microsoft/K8s-Storage-Plugins/tree/master/flexvolume/windows), and in-tree AzureFile and AzureDisk providers
- 
+
+### What we need to test and verify if it works or not for GA (items that are unsupported will be documented)
+- Headless services (https://github.com/kubernetes/kubernetes/issues/73416)
+- OOM reporting (https://github.com/kubernetes/kubernetes/issues/73417)
+- QoS (guaranteed, burstable, best effort) (https://github.com/kubernetes/kubernetes/issues/73418)
+- Is terminationGracePeriodSeconds supported (https://github.com/moby/moby/issues/25982)
+- Pod DNS configuration like hostname, subdomain, hostAliases, dnsConfig, dnsPolicy (https://github.com/kubernetes/kubernetes/issues/73414)
+
 ### Windows Node Roadmap (post-GA work)
 - Group Managed Service Accounts, a way to assign an Active Directory identity to a Windows container, is forthcoming with KEP `Windows Group Managed Service Accounts for Container Identity`
 - `kubectl port-forward` hasn't been implemented due to lack of an `nsenter` equivalent to run a process inside a network namespace.
@@ -111,7 +120,8 @@ As of 29-11-2018 much of the work for enabling Windows nodes has already been co
 
 ### What will never work (Note that some features are plain unsupported while some will not work without underlying OS changes)
 - Certain Pod functionality
-    - Privileged containers and other Pod security context privilege and access control settings
+    - Privileged containers
+    - Pod security context privilege and access control settings. Any Linux capabilities or any POSIX capabilities are not supported (this includes SELinux, AppArmor, Seccomp, etc)
     - Reservations are not enforced by the OS, but overprovisioning could be blocked with `--enforce-node-allocatable=pods` (pending: tests needed)
     - Certain volume mappings
       - Single file & subpath volume mounting
@@ -120,10 +130,16 @@ As of 29-11-2018 much of the work for enabling Windows nodes has already been co
       - readOnly root filesystem. Mapped volumes still support readOnly
       - Block device mapping
     - Termination Message - these require single file mappings
+    - HugePages
+    - Memory as the storage medium
 - CSI plugins, which require privileged containers
+- File system features like uui/guid, per-user Linux filesystem permissions, and read-only root filesystems
 - NFS based storage/volume support
 - Host networking is not available in Windows
+- ClusterFirstWithHostNet is not supported for DNS. Windows treats all names with a `.` as a FQDN and skips PQDN resolution
 - [Some parts of the V1 API](https://github.com/kubernetes/kubernetes/issues/70604)
+- Not all features of shared namespaces are supported. This is clarified in the API section below
+- The existing node problem detector is Linux-only and requires privileged containers. In general, we don’t expect these to be used on Windows because there’s no privileged support
 - Overlay networking support in Windows Server 1803 is not fully functional using the `win-overlay` CNI plugin. Specifically service IPs do not work on Windows nodes. This is currently specific to `win-overlay`; other CNI plugins (OVS, AzureCNI) work. Since Windows Server 1803 is not supported for GA, this is mostly not applicable. We left it here since it impacts beta
 
 ### Relevant resources/conversations
@@ -306,8 +322,8 @@ The Windows container runtime also has a few important differences:
 
 
 ### V1.Container
-`V1.Container.ResourceRequirements.limits.cpu`
-`V1.Container.ResourceRequirements.limits.memory`
+- `V1.Container.ResourceRequirements.limits.cpu`
+- `V1.Container.ResourceRequirements.limits.memory`
 
 
 Windows doesn't use hard limits for CPU allocations. Instead, a share system is used. The existing fields based on millicores are scaled into relative shares that are followed by the Windows scheduler. [see: kuberuntime/helpers_windows.go](https://github.com/kubernetes/kubernetes/blob/master/pkg/kubelet/kuberuntime/helpers_windows.go), [see: resource controls in Microsoft docs](https://docs.microsoft.com/en-us/virtualization/windowscontainers/manage-containers/resource-controls)
@@ -315,24 +331,24 @@ When using Hyper-V isolation (alpha), the hypervisor also needs a number of CPUs
 
 Huge pages are not implemented in the Windows container runtime, and are not available. They require [asserting a user privilege](https://docs.microsoft.com/en-us/windows/desktop/Memory/large-page-support) that's not configurable for containers.
 
-`V1.Container.ResourceRequirements.requests.cpu`
-`V1.Container.ResourceRequirements.requests.memory`
+- `V1.Container.ResourceRequirements.requests.cpu`
+- `V1.Container.ResourceRequirements.requests.memory`
 
 Requests are subtracted from node available resources, so they can be used to avoid overprovisioning a node. However, they cannot be used to guarantee resources in an overprovisioned node. They should be applied to all containers as a best practice if the operator wants to avoid overprovisioning entirely.
 
-`V1.Container.SecurityContext.allowPrivilegeEscalation` - not possible on Windows, none of the capabilies are hooked up
-`V1.Container.SecurityContext.Capabilities` - POSIX capabilities are not implemented on Windows
-`V1.Container.SecurityContext.privileged` - Windows doesn't support privileged containers
-`V1.Container.SecurityContext.readOnlyRootFilesystem` - not possible on Windows, write access is required for registry & system processes to run inside the container
-`V1.Container.SecurityContext.runAsGroup` - not possible on Windows, no GID support
-`V1.Container.SecurityContext.runAsUser` - not possible on Windows, no UID support as int. This needs to change to IntStr, see [64009](https://github.com/kubernetes/kubernetes/pull/64009), to support Windows users as strings, or another field is needed. Work remaining tracked in [#73387](https://github.com/kubernetes/kubernetes/issues/73387)
+- `V1.Container.SecurityContext.allowPrivilegeEscalation` - not possible on Windows, none of the capabilies are hooked up
+- `V1.Container.SecurityContext.Capabilities` - POSIX capabilities are not implemented on Windows
+- `V1.Container.SecurityContext.privileged` - Windows doesn't support privileged containers
+- `V1.Container.SecurityContext.readOnlyRootFilesystem` - not possible on Windows, write access is required for registry & system processes to run inside the container
+- `V1.Container.SecurityContext.runAsGroup` - not possible on Windows, no GID support
+- `V1.Container.SecurityContext.runAsUser` - not possible on Windows, no UID support as int. This needs to change to IntStr, see [64009](https://github.com/kubernetes/kubernetes/pull/64009), to support Windows users as strings, or another field is needed. Work remaining tracked in [#73387](https://github.com/kubernetes/kubernetes/issues/73387)
 
-`V1.Container.SecurityContext.seLinuxOptions` - not possible on Windows, no SELinux
+- `V1.Container.SecurityContext.seLinuxOptions` - not possible on Windows, no SELinux
 
-`V1.Container.terminationMessagePath` - this has some limitations in that Windows doesn't support mapping single files. The default value is `/dev/termination-log`, which does work because it does not exist on Windows by default.
+- `V1.Container.terminationMessagePath` - this has some limitations in that Windows doesn't support mapping single files. The default value is `/dev/termination-log`, which does work because it does not exist on Windows by default.
 
 
-`V1.Container.volumeMounts`
+- `V1.Container.volumeMounts`
 
 > TODO: check if mounting different volumes to containers in the same pod works. May need to go on test TODO list
 
@@ -342,23 +358,23 @@ Requests are subtracted from node available resources, so they can be used to av
 > TODO: double check other fields in [source](https://github.com/kubernetes/kubernetes/blob/master/staging/src/k8s.io/api/core/v1/types.go#L2743)
 
 
-`V1.Pod.hostIPC`, `v1.pod.hostpid` - host namespace sharing is not possible on Windows
+- `V1.Pod.hostIPC`, `v1.pod.hostpid` - host namespace sharing is not possible on Windows
 
-`V1.Pod.hostNetwork` - There is no Windows OS support to share the host network
+- `V1.Pod.hostNetwork` - There is no Windows OS support to share the host network
 
-`V1.Pod.dnsPolicy` - ClusterFirstWithHostNet - is not supported because Host Networking is not supported on Windows.
+- `V1.Pod.dnsPolicy` - ClusterFirstWithHostNet - is not supported because Host Networking is not supported on Windows.
 
-`V1.podSecurityContext.runAsUser` provides a UID, not available on Windows
-`V1.podSecurityContext.supplementalGroups` provides GID, not available on Windows
+- `V1.podSecurityContext.runAsUser` provides a UID, not available on Windows
+- `V1.podSecurityContext.supplementalGroups` provides GID, not available on Windows
 
-`V1.Pod.shareProcessNamespace` - this is an alpha feature, and depends on Linux cgroups which are not implemented on Windows
+- `V1.Pod.shareProcessNamespace` - this is an alpha feature, and depends on Linux cgroups which are not implemented on Windows
 
-`V1.Pod.volumeDevices` - this is an alpha feature, and is not implemented on Windows. Windows cannot attach raw block devices to pods.
+- `V1.Pod.volumeDevices` - this is an alpha feature, and is not implemented on Windows. Windows cannot attach raw block devices to pods.
 
-`V1.Pod.Volumes` - EmptyDir, Secret, ConfigMap, HostPath - all work and have tests in TestGrid
+- `V1.Pod.Volumes` - EmptyDir, Secret, ConfigMap, HostPath - all work and have tests in TestGrid
   - `V1.EmptyDirVolumeSource` - the Node default medium is disk on Windows. `memory` is not supported, as Windows does not have a built-in RAM disk.
 
-`V1.VolumeMount.mountPropagation` - only MountPropagationHostToContainer is available. Windows cannot create mounts within a pod or project them back to the node.
+- `V1.VolumeMount.mountPropagation` - only MountPropagationHostToContainer is available. Windows cannot create mounts within a pod or project them back to the node.
 
 
 References: 
