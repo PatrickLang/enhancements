@@ -110,6 +110,7 @@ As of 29-11-2018 much of the work for enabling Windows nodes has already been co
 - Is terminationGracePeriodSeconds supported (https://github.com/moby/moby/issues/25982)
 - Pod DNS configuration like hostname, subdomain, hostAliases, dnsConfig, dnsPolicy (https://github.com/kubernetes/kubernetes/issues/73414)
 - Mounting local volumes on Windows does not check if the volume path exists (https://github.com/kubernetes/kubernetes/issues/73332)
+- Fix run_as_username for Windows (https://github.com/kubernetes/kubernetes/issues/73387)
 
 ### Windows Node Roadmap (post-GA work)
 - Group Managed Service Accounts, a way to assign an Active Directory identity to a Windows container, is forthcoming with KEP `Windows Group Managed Service Accounts for Container Identity`
@@ -144,6 +145,7 @@ As of 29-11-2018 much of the work for enabling Windows nodes has already been co
 - Not all features of shared namespaces are supported. This is clarified in the API section below
 - The existing node problem detector is Linux-only and requires privileged containers. In general, we don’t expect these to be used on Windows because there’s no privileged support
 - Overlay networking support in Windows Server 1803 is not fully functional using the `win-overlay` CNI plugin. Specifically service IPs do not work on Windows nodes. This is currently specific to `win-overlay`; other CNI plugins (OVS, AzureCNI) work. Since Windows Server 1803 is not supported for GA, this is mostly not applicable. We left it here since it impacts beta
+- As noted above, there are compatibility issues enforced by Microsoft where the host OS version must matche the container base image. Changes to this compatibility policy must come from Microsoft.
 
 ### Relevant resources/conversations
 
@@ -347,9 +349,9 @@ When using Hyper-V isolation (alpha), the hypervisor also needs a number of CPUs
 - `V1.Pod.dnsPolicy` - ClusterFirstWithHostNet - is not supported because Host Networking is not supported on Windows.
 - `V1.podSecurityContext.runAsUser` provides a UID, not available on Windows
 - `V1.podSecurityContext.supplementalGroups` provides GID, not available on Windows
-- `V1.Pod.shareProcessNamespace` - this is an alpha feature, and depends on Linux cgroups which are not implemented on Windows
+- `V1.Pod.shareProcessNamespace` - this is an beta feature, and depends on Linux cgroups which are not implemented on Windows
 - `V1.Pod.terminationGracePeriodSeconds` - this is not fully implemented in Docker on Windows, see: [reference](https://github.com/moby/moby/issues/25982). The behavior today is that the ENTRYPOINT process is sent `CTRL_SHUTDOWN_EVENT`, then Windows waits 5 seconds by hardcoded default, and finally shuts down all processes using the normal Windows shutdown behavior. The 5 second default is actually in the Windows registry [inside the container](https://github.com/moby/moby/issues/25982#issuecomment-426441183), so it can be overridden when the container is built. Runtime configuration will be feasible in CRI-ContainerD but not for v1.14. Issue [#73434](https://github.com/kubernetes/kubernetes/issues/73434) is tracking this for a later release.
-- `V1.Pod.volumeDevices` - this is an alpha feature, and is not implemented on Windows. Windows cannot attach raw block devices to pods.
+- `V1.Pod.volumeDevices` - this is an beta feature, and is not implemented on Windows. Windows cannot attach raw block devices to pods.
 - `V1.Pod.Volumes` - EmptyDir, Secret, ConfigMap, HostPath - all work and have tests in TestGrid
   - `V1.EmptyDirVolumeSource` - the Node default medium is disk on Windows. `memory` is not supported, as Windows does not have a built-in RAM disk.
 - `V1.VolumeMount.mountPropagation` - only MountPropagationHostToContainer is available. Windows cannot create mounts within a pod or project them back to the node.
