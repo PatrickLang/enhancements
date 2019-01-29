@@ -48,6 +48,7 @@ status: implementable
 - [Implementation History](#implementation-history)
 - [Testing Plan](#testing-plan)
     - [Test Dashboard](#test-dashboard)
+    - [Test Environment](#test-environment)
     - [Test Approach](#test-approach)
         - [Adapting existing tests](#adapting-existing-tests)
         - [Substitute test cases](#substitute-test-cases)
@@ -212,7 +213,6 @@ tolerations:
 
 All test cases will be built in kubernetes/test/e2e, scheduled through [prow](https://github.com/kubernetes/test-infra/blob/master/config/jobs/kubernetes-sigs/sig-windows/sig-windows-config.yaml), and published on the [TestGrid SIG-Windows dashboard](https://testgrid.k8s.io/sig-windows) daily. This will be the master list of what needs to pass to be declared stable and will include all tests tagged [SIG-Windows] along with the subset of conformance tests that can pass on Windows. The current dashboard will be renamed "SIG-Windows Release" for clarity [see #10989](https://github.com/kubernetes/test-infra/issues/10989)
 
-
 Additional dashboard pages will be added over time as we run the same test cases with additional CRI, CNI and cloud providers. They are running the same test cases, and are not required for v1.14 graduation to stable.
 
 - Windows Server 2019 on GCP - this is [in progress](https://k8s-testgrid.appspot.com/google-windows#windows-prototype)
@@ -220,6 +220,15 @@ Additional dashboard pages will be added over time as we run the same test cases
 - Windows Server 2019 with OVN+OVS & CRI-ContainerD
 - Windows Server 2019 with Azure-CNI & CRI-ContainerD
 - Windows Server 2019 with Flannel & CRI-ContainerD
+
+### Test Environment
+
+The primary test environment deployed by [kubetest](https://github.com/kubernetes/test-infra/blob/72c720f29cb43d923ac76b10d25a62c29662683d/kubetest/azure.go#L180) for v1.14 is a group of VMs deployed on Azure:
+
+- 1 Master VM running Ubuntu, size "Standard_D2s_v3"
+- 3 Windows nodes running Windows Server 2019, size "Standard_D2s_v3"
+
+Kubetest uses [aks-engine](https://github.com/Azure/aks-engine) to create the deployment template for each of those VMs that's passed on to Azure for deployment. Once the test pass is complete, kubetest deletes the cluster. The Azure subscription used for this test pass is managed by Lachie Evenson & Patrick Lang. The credentials needed were given to the k8s-infra-oncall team.
 
 ### Test Approach
 
@@ -349,7 +358,7 @@ When using Hyper-V isolation (alpha), the hypervisor also needs a number of CPUs
 - `V1.Pod.dnsPolicy` - ClusterFirstWithHostNet - is not supported because Host Networking is not supported on Windows.
 - `V1.podSecurityContext.runAsUser` provides a UID, not available on Windows
 - `V1.podSecurityContext.supplementalGroups` provides GID, not available on Windows
-- `V1.Pod.shareProcessNamespace` - this is an beta feature, and depends on Linux cgroups which are not implemented on Windows
+- `V1.Pod.shareProcessNamespace` - this is an beta feature, and depends on Linux namespaces which are not implemented on Windows. Windows cannot share process namespaces or the container's root filesystem. Only the network can be shared.
 - `V1.Pod.terminationGracePeriodSeconds` - this is not fully implemented in Docker on Windows, see: [reference](https://github.com/moby/moby/issues/25982). The behavior today is that the ENTRYPOINT process is sent `CTRL_SHUTDOWN_EVENT`, then Windows waits 5 seconds by hardcoded default, and finally shuts down all processes using the normal Windows shutdown behavior. The 5 second default is actually in the Windows registry [inside the container](https://github.com/moby/moby/issues/25982#issuecomment-426441183), so it can be overridden when the container is built. Runtime configuration will be feasible in CRI-ContainerD but not for v1.14. Issue [#73434](https://github.com/kubernetes/kubernetes/issues/73434) is tracking this for a later release.
 - `V1.Pod.volumeDevices` - this is an beta feature, and is not implemented on Windows. Windows cannot attach raw block devices to pods.
 - `V1.Pod.Volumes` - EmptyDir, Secret, ConfigMap, HostPath - all work and have tests in TestGrid
