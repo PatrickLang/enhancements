@@ -24,7 +24,7 @@ see-also:
 
 ## Table of Contents
 
-<!-- TOC -->
+<!-- toc -->
 
 - [Table of Contents](#table-of-contents)
 - [Release Signoff Checklist](#release-signoff-checklist)
@@ -63,7 +63,7 @@ see-also:
 - [Reference & Examples](#reference--examples)
     - [Multi-arch container image overview](#multi-arch-container-image-overview)
 
-<!-- /TOC -->
+<!-- /toc -->
 
 ## Release Signoff Checklist
 
